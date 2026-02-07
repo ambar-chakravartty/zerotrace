@@ -1,10 +1,12 @@
 #include "include/gui.hpp"
+#include "include/wipe.hpp"
 #include <gtk/gtk.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <thread>
 
 // --- Utilities ---
 
@@ -21,17 +23,204 @@ std::string formatSize(uint64_t bytes) {
     return ss.str();
 }
 
+// --- Data Structures ---
+
+struct WipeDialogData {
+    Device device;
+    GtkWidget *dialog;
+    GtkWidget *method_combo;
+    GtkWidget *confirm_check;
+};
+
 // --- Callbacks ---
 
-static void on_wipe_clicked(GtkButton* btn, gpointer user_data) {
-    char* devicePath = (char*)user_data;
-    std::cout << "Wipe requested for: " << devicePath << std::endl;
-    // TODO: Connect to actual wipe logic
+static void on_wipe_start(GtkButton* btn, gpointer user_data) {
+    WipeDialogData* data = (WipeDialogData*)user_data;
+    
+    // Check confirmation
+    if (!gtk_check_button_get_active(GTK_CHECK_BUTTON(data->confirm_check))) {
+        GtkWidget *msg = gtk_message_dialog_new(
+            GTK_WINDOW(data->dialog),
+            GTK_DIALOG_MODAL,
+            GTK_MESSAGE_WARNING,
+            GTK_BUTTONS_OK,
+            "Please confirm that you understand this action will permanently erase data."
+        );
+        gtk_window_present(GTK_WINDOW(msg));
+        g_signal_connect(msg, "response", G_CALLBACK(gtk_window_destroy), NULL);
+        return;
+    }
+    
+    // Get selected wipe method
+    int method_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(data->method_combo));
+    WipeMethod method = WipeMethod::PLAIN_OVERWRITE;
+    
+    switch(method_idx) {
+        case 0: method = WipeMethod::PLAIN_OVERWRITE; break;
+        case 1: method = WipeMethod::ATA_SECURE_ERASE; break;
+        case 2: method = WipeMethod::ENCRYPTED_OVERWRITE; break;
+    }
+    
+    // Show confirmation message
+    std::string msg_text = "You are about to wipe the ENTIRE device:\n\n";
+    msg_text += "• " + data->device.path + " (" + data->device.name + ")\n";
+    msg_text += "• Size: " + formatSize(data->device.sizeBytes) + "\n";
+    msg_text += "\nThis action CANNOT be undone. Continue?";
+    
+    GtkWidget *confirm_dialog = gtk_message_dialog_new(
+        GTK_WINDOW(data->dialog),
+        GTK_DIALOG_MODAL,
+        GTK_MESSAGE_WARNING,
+        GTK_BUTTONS_YES_NO,
+        "%s", msg_text.c_str()
+    );
+    
+    int response = gtk_dialog_run(GTK_DIALOG(confirm_dialog));
+    gtk_window_destroy(GTK_WINDOW(confirm_dialog));
+    
+    if (response == GTK_RESPONSE_YES) {
+        // TODO: Start wipe in background thread
+        std::cout << "Starting wipe operation on: " << data->device.path << std::endl;
+        // In real implementation: spawn thread and call wipeDisk(data->device.path, method)
+        
+        gtk_window_close(GTK_WINDOW(data->dialog));
+    }
 }
 
-static void free_device_path(gpointer data, GClosure* closure) {
+static void show_wipe_config_dialog(GtkWindow* parent, const Device& device) {
+    WipeDialogData* data = new WipeDialogData();
+    data->device = device;
+    
+    // Create dialog
+    data->dialog = gtk_window_new();
+    gtk_window_set_transient_for(GTK_WINDOW(data->dialog), parent);
+    gtk_window_set_modal(GTK_WINDOW(data->dialog), TRUE);
+    gtk_window_set_title(GTK_WINDOW(data->dialog), "Wipe Raw Storage Device");
+    gtk_window_set_default_size(GTK_WINDOW(data->dialog), 600, 450);
+    
+    // Main container
+    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_widget_set_margin_top(main_box, 20);
+    gtk_widget_set_margin_bottom(main_box, 20);
+    gtk_widget_set_margin_start(main_box, 30);
+    gtk_widget_set_margin_end(main_box, 30);
+    gtk_window_set_child(GTK_WINDOW(data->dialog), main_box);
+    
+    // Header
+    GtkWidget *header = gtk_label_new(NULL);
+    std::string header_markup = "<span size='xx-large' weight='bold' color='#40a4ff'>Wipe Raw Storage Device</span>";
+    gtk_label_set_markup(GTK_LABEL(header), header_markup.c_str());
+    gtk_box_append(GTK_BOX(main_box), header);
+    
+    // Device Info Card
+    GtkWidget *dev_frame = gtk_frame_new("Device Information");
+    gtk_widget_set_margin_bottom(dev_frame, 10);
+    GtkWidget *dev_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(dev_box, 10);
+    gtk_widget_set_margin_bottom(dev_box, 10);
+    gtk_widget_set_margin_start(dev_box, 10);
+    gtk_widget_set_margin_end(dev_box, 10);
+    gtk_frame_set_child(GTK_FRAME(dev_frame), dev_box);
+    
+    std::string dev_name = "<b>Device:</b> " + device.name + " (" + device.path + ")";
+    GtkWidget *name_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(name_label), dev_name.c_str());
+    gtk_label_set_xalign(GTK_LABEL(name_label), 0);
+    gtk_box_append(GTK_BOX(dev_box), name_label);
+    
+    std::string dev_model = "<b>Model:</b> " + (device.model.empty() ? "Unknown" : device.model);
+    GtkWidget *model_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(model_label), dev_model.c_str());
+    gtk_label_set_xalign(GTK_LABEL(model_label), 0);
+    gtk_box_append(GTK_BOX(dev_box), model_label);
+    
+    std::string dev_size = "<b>Size:</b> " + formatSize(device.sizeBytes);
+    GtkWidget *size_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(size_label), dev_size.c_str());
+    gtk_label_set_xalign(GTK_LABEL(size_label), 0);
+    gtk_box_append(GTK_BOX(dev_box), size_label);
+    
+    gtk_box_append(GTK_BOX(main_box), dev_frame);
+    
+    // Warning about entire device
+    GtkWidget *info_frame = gtk_frame_new(NULL);
+    gtk_widget_set_margin_bottom(info_frame, 10);
+    GtkWidget *info_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_widget_set_margin_top(info_box, 10);
+    gtk_widget_set_margin_bottom(info_box, 10);
+    gtk_widget_set_margin_start(info_box, 10);
+    gtk_widget_set_margin_end(info_box, 10);
+    gtk_frame_set_child(GTK_FRAME(info_frame), info_box);
+    
+    GtkWidget *info_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(info_label), 
+        "<span weight='bold' size='large'>This will wipe the ENTIRE raw storage device</span>\n\n"
+        "All partitions, filesystems, and data on this device will be permanently erased.");
+    gtk_label_set_wrap(GTK_LABEL(info_label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(info_label), 0);
+    gtk_box_append(GTK_BOX(info_box), info_label);
+    
+    gtk_box_append(GTK_BOX(main_box), info_frame);
+    
+    // Wipe Method
+    GtkWidget *method_frame = gtk_frame_new("Wipe Method");
+    gtk_widget_set_margin_bottom(method_frame, 10);
+    GtkWidget *method_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(method_box, 10);
+    gtk_widget_set_margin_bottom(method_box, 10);
+    gtk_widget_set_margin_start(method_box, 10);
+    gtk_widget_set_margin_end(method_box, 10);
+    gtk_frame_set_child(GTK_FRAME(method_frame), method_box);
+    
+    const char* methods[] = {"Plain Overwrite (3-pass)", "ATA Secure Erase", "Encrypted Overwrite", NULL};
+    GtkStringList *method_list = gtk_string_list_new(methods);
+    data->method_combo = gtk_drop_down_new(G_LIST_MODEL(method_list), NULL);
+    gtk_box_append(GTK_BOX(method_box), data->method_combo);
+    
+    gtk_box_append(GTK_BOX(main_box), method_frame);
+    
+    // Confirmation
+    data->confirm_check = gtk_check_button_new_with_label(
+        "I understand this will permanently erase all data and cannot be undone"
+    );
+    gtk_box_append(GTK_BOX(main_box), data->confirm_check);
+    
+    // Warning
+    GtkWidget *warning = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(warning), 
+        "<span color='#ff6464' size='large' weight='bold'>⚠ WARNING: This action is IRREVERSIBLE!</span>");
+    gtk_box_append(GTK_BOX(main_box), warning);
+    
+    // Buttons
+    GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_halign(btn_box, GTK_ALIGN_END);
+    
+    GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+    g_signal_connect_swapped(cancel_btn, "clicked", G_CALLBACK(gtk_window_close), data->dialog);
+    gtk_box_append(GTK_BOX(btn_box), cancel_btn);
+    
+    GtkWidget *start_btn = gtk_button_new_with_label("Start Wipe");
+    gtk_widget_add_css_class(start_btn, "destructive-action");
+    g_signal_connect(start_btn, "clicked", G_CALLBACK(on_wipe_start), data);
+    gtk_box_append(GTK_BOX(btn_box), start_btn);
+    
+    gtk_box_append(GTK_BOX(main_box), btn_box);
+    
+    // Cleanup on dialog close
+    g_signal_connect_swapped(data->dialog, "close-request", G_CALLBACK(g_free), data);
+    
+    gtk_window_present(GTK_WINDOW(data->dialog));
+}
+
+static void on_wipe_clicked(GtkButton* btn, gpointer user_data) {
+    Device* device = (Device*)user_data;
+    GtkWidget *toplevel = gtk_widget_get_root(GTK_WIDGET(btn));
+    show_wipe_config_dialog(GTK_WINDOW(toplevel), *device);
+}
+
+static void free_device(gpointer data, GClosure* closure) {
     (void)closure;
-    g_free(data);
+    delete (Device*)data;
 }
 
 static void refresh_device_list(GtkWidget* container_box) {
@@ -121,11 +310,11 @@ static void refresh_device_list(GtkWidget* container_box) {
         gtk_widget_set_margin_top(actions_box, 8);
 
         GtkWidget *wipe_btn = gtk_button_new_with_label("Wipe Drive");
-        gtk_widget_add_css_class(wipe_btn, "destructive-action"); // Standard GTK class? maybe not, but "destructive-action" is common in Adwaita
+        gtk_widget_add_css_class(wipe_btn, "destructive-action");
         
-        // Copy path for callback
-        char* path_copy = g_strdup(dev.path.c_str());
-        g_signal_connect_data(wipe_btn, "clicked", G_CALLBACK(on_wipe_clicked), path_copy, free_device_path, (GConnectFlags)0);
+        // Copy device for callback
+        Device* dev_copy = new Device(dev);
+        g_signal_connect_data(wipe_btn, "clicked", G_CALLBACK(on_wipe_clicked), dev_copy, free_device, (GConnectFlags)0);
 
         gtk_box_append(GTK_BOX(actions_box), wipe_btn);
         gtk_box_append(GTK_BOX(card_box), actions_box);

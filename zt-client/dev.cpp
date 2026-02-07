@@ -101,7 +101,7 @@ std::vector<Device> getDevices() {
                 dev.supportedWipeMethods.push_back(WipeMethod::FIRMWARE_ERASE);
             } else if (dev.type == "ATA/SCSI") {
                 // Assume ATA supports Secure Erase (though it might be frozen)
-                dev.supportedWipeMethods.push_back(WipeMethod::FIRMWARE_ERASE);
+                dev.supportedWipeMethods.push_back(WipeMethod::ATA_SECURE_ERASE);
             }
         }
 
@@ -109,5 +109,7 @@ std::vector<Device> getDevices() {
     }
     return devices;
 }
+
+
 
 
