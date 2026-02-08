@@ -14,8 +14,10 @@
 
 struct AppState {
     GtkWidget *stack;
+    GtkWidget *landing_view;
     GtkWidget *device_list_view;
     GtkWidget *wipe_options_view;
+    GtkWidget *verification_view;
     
     // Wipe Options Widgets
     GtkWidget *target_device_label;
@@ -25,6 +27,10 @@ struct AppState {
     GtkCheckButton *radio_encrypted;
     GtkCheckButton *radio_ata;
     GtkCheckButton *radio_firmware;
+    
+    // Verification Widgets
+    GtkWidget *verification_result_label;
+    GtkWidget *verification_status_label;
     
     // Selected Context
     Device selectedDevice;
@@ -50,6 +56,9 @@ std::string formatSize(uint64_t bytes) {
 // --- Forward Declarations ---
 static void refresh_device_list(GtkWidget* container_box);
 static void switch_to_device_list(GtkButton* btn, gpointer user_data);
+static void switch_to_landing(GtkButton* btn, gpointer user_data);
+static void switch_to_verification(GtkButton* btn, gpointer user_data);
+static void on_verify_certificate(GtkButton* btn, gpointer user_data);
 
 // --- Logic ---
 
@@ -299,6 +308,180 @@ static GtkWidget* create_wipe_options_view() {
     return container;
 }
 
+static GtkWidget* create_landing_view() {
+    GtkWidget *container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(container, "landing-container");
+    gtk_widget_set_vexpand(container, TRUE);
+    gtk_widget_set_hexpand(container, TRUE);
+    
+    // Top Header
+    GtkWidget *header = gtk_label_new("ZEROTRACE");
+    gtk_widget_add_css_class(header, "landing-header");
+    gtk_widget_set_halign(header, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(header, 20);
+    gtk_widget_set_margin_top(header, 20);
+    gtk_box_append(GTK_BOX(container), header);
+    
+    // Center Content
+    GtkWidget *center_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_widget_set_valign(center_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_halign(center_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_vexpand(center_box, TRUE);
+    
+    // Main Title
+    GtkWidget *title = gtk_label_new("ZEROTRACE");
+    gtk_widget_add_css_class(title, "landing-title");
+    gtk_box_append(GTK_BOX(center_box), title);
+    
+    // Subtitle
+    GtkWidget *subtitle = gtk_label_new("IT Asset Wiping Utility");
+    gtk_widget_add_css_class(subtitle, "landing-subtitle");
+    gtk_box_append(GTK_BOX(center_box), subtitle);
+    
+    // Buttons Box
+    GtkWidget *buttons_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 15);
+    gtk_widget_set_halign(buttons_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(buttons_box, 40);
+    
+    // Proceed Button
+    GtkWidget *proceed_btn = gtk_button_new_with_label("Proceed");
+    gtk_widget_add_css_class(proceed_btn, "primary-button");
+    gtk_widget_set_size_request(proceed_btn, 300, -1);
+    g_signal_connect(proceed_btn, "clicked", G_CALLBACK(switch_to_device_list), NULL);
+    gtk_box_append(GTK_BOX(buttons_box), proceed_btn);
+    
+    // Verify Button
+    GtkWidget *verify_btn = gtk_button_new_with_label("Verify Existing Certificates");
+    gtk_widget_add_css_class(verify_btn, "secondary-button");
+    gtk_widget_set_size_request(verify_btn, 300, -1);
+    g_signal_connect(verify_btn, "clicked", G_CALLBACK(switch_to_verification), NULL);
+    gtk_box_append(GTK_BOX(buttons_box), verify_btn);
+    
+    gtk_box_append(GTK_BOX(center_box), buttons_box);
+    gtk_box_append(GTK_BOX(container), center_box);
+    
+    return container;
+}
+
+static GtkWidget* create_verification_view() {
+    GtkWidget *container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 20);
+    gtk_widget_add_css_class(container, "verification-container");
+    gtk_widget_set_margin_top(container, 40);
+    gtk_widget_set_margin_bottom(container, 40);
+    gtk_widget_set_margin_start(container, 60);
+    gtk_widget_set_margin_end(container, 60);
+    
+    // Title
+    GtkWidget *title = gtk_label_new("Certificate Verification");
+    gtk_widget_add_css_class(title, "verification-title");
+    gtk_box_append(GTK_BOX(container), title);
+    
+    // Instructions
+    GtkWidget *instructions = gtk_label_new("Select a certificate JSON file to verify its authenticity on the blockchain.");
+    gtk_label_set_wrap(GTK_LABEL(instructions), TRUE);
+    gtk_widget_set_margin_bottom(instructions, 20);
+    gtk_box_append(GTK_BOX(container), instructions);
+    
+    // File Chooser Button
+    GtkWidget *file_btn = gtk_button_new_with_label("Choose Certificate File");
+    gtk_widget_add_css_class(file_btn, "primary-button");
+    gtk_widget_set_halign(file_btn, GTK_ALIGN_CENTER);
+    g_signal_connect(file_btn, "clicked", G_CALLBACK(on_verify_certificate), NULL);
+    gtk_box_append(GTK_BOX(container), file_btn);
+    
+    // Status Label
+    appState.verification_status_label = gtk_label_new("");
+    gtk_widget_set_margin_top(appState.verification_status_label, 20);
+    gtk_box_append(GTK_BOX(container), appState.verification_status_label);
+    
+    // Result Display
+    appState.verification_result_label = gtk_label_new("");
+    gtk_label_set_wrap(GTK_LABEL(appState.verification_result_label), TRUE);
+    gtk_widget_add_css_class(appState.verification_result_label, "verification-result");
+    gtk_widget_set_margin_top(appState.verification_result_label, 20);
+    gtk_box_append(GTK_BOX(container), appState.verification_result_label);
+    
+    // Back Button
+    GtkWidget *back_btn = gtk_button_new_with_label("Back to Home");
+    gtk_widget_add_css_class(back_btn, "secondary-button");
+    gtk_widget_set_halign(back_btn, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(back_btn, 30);
+    g_signal_connect(back_btn, "clicked", G_CALLBACK(switch_to_landing), NULL);
+    gtk_box_append(GTK_BOX(container), back_btn);
+    
+    return container;
+}
+
+static void switch_to_landing(GtkButton* btn, gpointer user_data) {
+    (void)btn;
+    (void)user_data;
+    gtk_stack_set_visible_child(GTK_STACK(appState.stack), appState.landing_view);
+}
+
+static void switch_to_verification(GtkButton* btn, gpointer user_data) {
+    (void)btn;
+    (void)user_data;
+    // Clear previous results
+    gtk_label_set_text(GTK_LABEL(appState.verification_status_label), "");
+    gtk_label_set_text(GTK_LABEL(appState.verification_result_label), "");
+    gtk_stack_set_visible_child(GTK_STACK(appState.stack), appState.verification_view);
+}
+
+static void on_verify_certificate(GtkButton* btn, gpointer user_data) {
+    (void)btn;
+    (void)user_data;
+    
+    // Create file chooser dialog
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        "Select Certificate File",
+        NULL,
+        GTK_FILE_CHOOSER_ACTION_OPEN,
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Open", GTK_RESPONSE_ACCEPT,
+        NULL
+    );
+    
+    // Add JSON filter
+    GtkFileFilter *filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "JSON Files");
+    gtk_file_filter_add_pattern(filter, "*.json");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(dialog), filter);
+    
+    g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog* dialog, int response, gpointer data) {
+        if (response == GTK_RESPONSE_ACCEPT) {
+            GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+            char *filepath = g_file_get_path(file);
+            g_object_unref(file);
+            
+            gtk_label_set_markup(GTK_LABEL(appState.verification_status_label),
+                "<span color='#40a4ff'>Verifying certificate...</span>");
+            
+            // Perform verification
+            VerificationResult result = verifyCertificateFromFile(filepath);
+            
+            if (result.verified) {
+                std::string resultText = "<span size='large' weight='bold' color='#64ff64'>✓ Certificate Verified</span>\n\n";
+                resultText += "<span color='#c0c0c0'>Timestamp:</span> <span color='#ffffff'>" + 
+                             std::to_string(result.timestamp) + "</span>\n";
+                resultText += "<span color='#c0c0c0'>Wipe Method:</span> <span color='#ffffff'>" + 
+                             std::to_string(result.wipeMethod) + "</span>";
+                gtk_label_set_markup(GTK_LABEL(appState.verification_result_label), resultText.c_str());
+                gtk_label_set_text(GTK_LABEL(appState.verification_status_label), "");
+            } else {
+                std::string errorText = "<span size='large' weight='bold' color='#ff6464'>✗ Verification Failed</span>\n\n";
+                errorText += "<span color='#ff8080'>" + result.errorMessage + "</span>";
+                gtk_label_set_markup(GTK_LABEL(appState.verification_result_label), errorText.c_str());
+                gtk_label_set_text(GTK_LABEL(appState.verification_status_label), "");
+            }
+            
+            g_free(filepath);
+        }
+        gtk_window_destroy(GTK_WINDOW(dialog));
+    }), NULL);
+    
+    gtk_widget_show(dialog);
+}
+
 // --- List Logic (Refactored) ---
 
 static void refresh_device_list(GtkWidget* container_box) {
@@ -409,16 +592,24 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_window_set_title(GTK_WINDOW(window), "ZeroTrace");
     gtk_window_set_default_size(GTK_WINDOW(window), 900, 700);
 
-    // Main Stack
+    // Load CSS
+       // Main Stack
     appState.stack = gtk_stack_new();
     gtk_stack_set_transition_type(GTK_STACK(appState.stack), GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT);
     
     // Create Views
+    appState.landing_view = create_landing_view();
     appState.device_list_view = create_device_list_view();
     appState.wipe_options_view = create_wipe_options_view();
+    appState.verification_view = create_verification_view();
     
+    gtk_stack_add_named(GTK_STACK(appState.stack), appState.landing_view, "landing");
     gtk_stack_add_named(GTK_STACK(appState.stack), appState.device_list_view, "device_list");
     gtk_stack_add_named(GTK_STACK(appState.stack), appState.wipe_options_view, "wipe_options");
+    gtk_stack_add_named(GTK_STACK(appState.stack), appState.verification_view, "verification");
+    
+    // Set landing as initial view
+    gtk_stack_set_visible_child(GTK_STACK(appState.stack), appState.landing_view);
     
     gtk_window_set_child(GTK_WINDOW(window), appState.stack);
 

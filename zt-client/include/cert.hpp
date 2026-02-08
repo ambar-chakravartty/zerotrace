@@ -28,6 +28,13 @@ struct WipeResult {
     std::string tool_version;
 };
 
+struct VerificationResult {
+    bool verified;
+    std::string errorMessage;
+    uint64_t timestamp;
+    uint8_t wipeMethod;
+};
+
 std::array<uint8_t, 32> sha256(const std::string& data);
 std::array<uint8_t, 32> deviceIdentityHash(const WipeResult& r);
 std::string generateCertificateJSON(const WipeResult& r);
@@ -37,5 +44,5 @@ nlohmann::json makeChainRequest(
     uint8_t wipeMethod
 );
 bool recordWipeViaHelper(const nlohmann::json& payload);
-
+VerificationResult verifyCertificateFromFile(const std::string& filepath);
 #endif
