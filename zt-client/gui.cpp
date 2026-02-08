@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <thread>
 
 // --- App State ---
 
@@ -23,6 +24,7 @@ struct AppState {
     GtkWidget *target_device_label;
     GtkWidget *methods_box;
     GtkWidget *status_label;
+    GtkWidget *confirm_wipe_btn;
     GtkCheckButton *radio_plain;
     GtkCheckButton *radio_encrypted;
     GtkCheckButton *radio_ata;
@@ -97,6 +99,36 @@ static void show_status_safe(const std::string& msg, bool isError = false) {
 }
 
 
+static gboolean on_wipe_complete(gpointer data) {
+    WipeResult* resultPtr = (WipeResult*)data;
+    WipeResult result = *resultPtr;
+    delete resultPtr;
+
+    if (result.status == WipeStatus::SUCCESS) {
+        std::string cert = generateCertificateJSON(result);
+        std::cout << "--- WIPE CERTIFICATE ---\n" << cert << "\n------------------------" << std::endl;
+
+        auto certHash = sha256(cert);
+        auto devHash = deviceIdentityHash(result);
+        auto payload = makeChainRequest(certHash, devHash, static_cast<uint8_t>(result.method));
+
+        if (recordWipeViaHelper(payload)) {
+            show_status_safe("Wipe Success! Certificate recorded on blockchain.", false);
+        } else {
+            show_status_safe("Wipe Success, but Certificate recording failed.", true);
+        }
+    } else if(result.status == WipeStatus::FAILURE) {
+        show_status_safe("Wipe Failed! Check console/logs.", true);
+    }
+
+    // Re-enable button
+    if (appState.confirm_wipe_btn) {
+        gtk_widget_set_sensitive(appState.confirm_wipe_btn, TRUE);
+    }
+
+    return FALSE; // Stop the idle function
+}
+
 static void on_confirm_wipe_clicked(GtkButton* btn, gpointer user_data) {
     (void)btn;
     (void)user_data;
@@ -121,35 +153,22 @@ static void on_confirm_wipe_clicked(GtkButton* btn, gpointer user_data) {
     std::cout << "Starting wipe on " << appState.selectedDevice.path 
               << " using method: " << methodStr << std::endl;
               
-    // TODO: This should ideally be async to avoid freezing UI
-    // For now, we update status before (which might not render if main thread blocks) 
-    // and after.
+    show_status_safe("Wiping... Please Wait... (This may take a while)", false);
     
-    show_status_safe("Wiping... Please Wait...", false);
-    
-    // Force UI update? In GTK4 strictly we should use an async worker.
-    // But for this task scope, blocking is "acceptable" if not requested otherwise, 
-    // though users hate it. 
-    // Let's just call it.
-    
-    WipeResult result = wipeDisk(appState.selectedDevice.path, method);
-    
-    if (result.status == WipeStatus::SUCCESS) {
-        std::string cert = generateCertificateJSON(result);
-        std::cout << "--- WIPE CERTIFICATE ---\n" << cert << "\n------------------------" << std::endl;
-
-        auto certHash = sha256(cert);
-        auto devHash = deviceIdentityHash(result);
-        auto payload = makeChainRequest(certHash, devHash, static_cast<uint8_t>(result.method));
-
-        if (recordWipeViaHelper(payload)) {
-            show_status_safe("Wipe Success! Certificate recorded on blockchain.", false);
-        } else {
-            show_status_safe("Wipe Success, but Certificate recording failed.", true);
-        }
-    } else if(result.status == WipeStatus::FAILURE) {
-        show_status_safe("Wipe Failed! Check console/logs.", true);
+    // Disable button to prevent re-entry
+    if (appState.confirm_wipe_btn) {
+        gtk_widget_set_sensitive(appState.confirm_wipe_btn, FALSE);
     }
+
+    std::string path = appState.selectedDevice.path;
+
+    // Launch worker thread
+    std::thread worker([path, method]() {
+        WipeResult resultVal = wipeDisk(path, method);
+        WipeResult* resultHeap = new WipeResult(resultVal);
+        g_idle_add(on_wipe_complete, resultHeap);
+    });
+    worker.detach();
 }
 
 static void switch_to_device_list(GtkButton* btn, gpointer user_data) {
@@ -170,7 +189,12 @@ static void prepare_wipe_options() {
     gtk_label_set_text(GTK_LABEL(appState.status_label), "");
 
     // Reset selection to default
-    gtk_check_button_set_active(appState.radio_plain, TRUE); 
+    gtk_check_button_set_active(appState.radio_plain, TRUE);
+    
+    // Ensure button is enabled (in case it was stuck disabled)
+    if (appState.confirm_wipe_btn) {
+        gtk_widget_set_sensitive(appState.confirm_wipe_btn, TRUE);
+    }
 }
 
 static void on_wipe_request(GtkButton* btn, gpointer user_data) {
@@ -296,12 +320,12 @@ static GtkWidget* create_wipe_options_view() {
     GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
     g_signal_connect(cancel_btn, "clicked", G_CALLBACK(switch_to_device_list), NULL);
     
-    GtkWidget *confirm_btn = gtk_button_new_with_label("PERFORM WIPE");
-    gtk_widget_add_css_class(confirm_btn, "destructive-action");
-    g_signal_connect(confirm_btn, "clicked", G_CALLBACK(on_confirm_wipe_clicked), NULL);
+    appState.confirm_wipe_btn = gtk_button_new_with_label("PERFORM WIPE");
+    gtk_widget_add_css_class(appState.confirm_wipe_btn, "destructive-action");
+    g_signal_connect(appState.confirm_wipe_btn, "clicked", G_CALLBACK(on_confirm_wipe_clicked), NULL);
     
     gtk_box_append(GTK_BOX(actions_box), cancel_btn);
-    gtk_box_append(GTK_BOX(actions_box), confirm_btn);
+    gtk_box_append(GTK_BOX(actions_box), appState.confirm_wipe_btn);
     
     gtk_box_append(GTK_BOX(container), actions_box);
     
