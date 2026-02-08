@@ -1,4 +1,5 @@
 #include "include/gui.hpp"
+#include "include/cert.hpp"
 #include "include/wipe.hpp"
 #include "include/dev.hpp"
 #include <gtk/gtk.h>
@@ -122,11 +123,11 @@ static void on_confirm_wipe_clicked(GtkButton* btn, gpointer user_data) {
     // though users hate it. 
     // Let's just call it.
     
-    bool result = wipeDisk(appState.selectedDevice.path, method);
+    WipeResult result = wipeDisk(appState.selectedDevice.path, method);
     
-    if (result) {
+    if (result.status == WipeStatus::SUCCESS) {
         show_status_safe("Wipe Completed Successfully!", false);
-    } else {
+    } else if(result.status == WipeStatus::FAILURE) {
         show_status_safe("Wipe Failed! Check console/logs.", true);
     }
 }

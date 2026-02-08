@@ -1,4 +1,5 @@
 #include "include/wipe.hpp"
+#include "include/cert.hpp"
 #include "include/dev.hpp"
 #include <fcntl.h>
 #include <unistd.h>
@@ -183,21 +184,36 @@ bool nvmeSanitize(const std::string& devicePath) {
     return true;
 }
 
-bool wipeDisk(const std::string& devicePath, WipeMethod
+WipeResult wipeDisk(const std::string& devicePath, WipeMethod
         method){
+
+    WipeResult result = {};
+    result.device_path = devicePath;
+    result.method = method;
+    result.start_time = time(nullptr);
+    result.tool_version = "zt-wipe 1.0";
+
+    bool ok = false;
 
     switch(method){
         case WipeMethod::ATA_SECURE_ERASE:
-            return ataSecureErase(devicePath);
+            ok = ataSecureErase(devicePath);
+            break;
         case WipeMethod::FIRMWARE_ERASE:
-            return nvmeSanitize(devicePath);
+            ok = nvmeSanitize(devicePath);
+            break;
         case WipeMethod::PLAIN_OVERWRITE:
-            return mpOverwrite(devicePath);
+            ok = mpOverwrite(devicePath);
+            break;
         case WipeMethod::ENCRYPTED_OVERWRITE:
             break;
         default:
             std::cout << "Unsupported Wipe Method\n";
 
     }
-    return false;
+
+
+    result.end_time = time(nullptr);
+    result.status = ok ? WipeStatus::SUCCESS : WipeStatus::FAILURE;
+    return result;
 }

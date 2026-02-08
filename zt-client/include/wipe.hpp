@@ -3,7 +3,8 @@
 
 #include <string>
 #include "dev.hpp" 
+#include "cert.hpp"
 
-bool wipeDisk(const std::string& devicePath, WipeMethod method);
+WipeResult wipeDisk(const std::string& devicePath, WipeMethod method);
 
 #endif
