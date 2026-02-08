@@ -1,3 +1,6 @@
 [submodule "zt-contract"]
 	path = zt-contract
 	url = https://github.com/Akhil0045/CVS.git
+[submodule "ipfs_contract"]
+	path = ipfs_contract
+	url = https://github.com/Akhil0045/zerotrace_contract
